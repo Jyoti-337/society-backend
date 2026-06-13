@@ -5,21 +5,22 @@ const bcrypt = require('bcryptjs')
 const jwt = require('jsonwebtoken')
 
 const app = express()
-const SECRET = 'society_secret_2025'
+const SECRET = process.env.JWT_SECRET || 'society_secret_2025'
+const PORT = process.env.PORT || 5000
 
-app.use(cors())
+app.use(cors({
+  origin: '*',
+  credentials: true
+}))
 app.use(express.json())
 
-// Roles only ONE person can hold at a time
 const UNIQUE_ROLES = ['admin', 'chairman', 'secretary', 'treasurer', 'security']
 
-// Role display labels
 const ROLE_LABELS = {
   admin: 'Admin', chairman: 'Chairman', secretary: 'Secretary',
   treasurer: 'Treasurer', security: 'Watchman', resident: 'Resident'
 }
 
-// ── AUTH MIDDLEWARE ────────────────────────────────────────
 const auth = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1]
   if (!token) return res.status(401).json({ error: 'No token provided' })
@@ -33,7 +34,6 @@ const adminOnly = (req, res, next) => {
   next()
 }
 
-// ── REGISTER ──────────────────────────────────────────────
 app.post('/api/auth/register', async (req, res) => {
   try {
     const { name, email, password, flat, phone, status, role } = req.body
@@ -44,19 +44,16 @@ app.post('/api/auth/register', async (req, res) => {
     if (password.length < 6)
       return res.status(400).json({ error: 'Password must be at least 6 characters' })
 
-    // Check duplicate email
     const existing = await knex('users').where({ email: email.toLowerCase().trim() }).first()
     if (existing)
       return res.status(400).json({ error: 'An account with this email already exists' })
 
     const assignedRole = (role || 'resident').toLowerCase().trim()
 
-    // Valid roles check
     const validRoles = ['admin', 'chairman', 'secretary', 'treasurer', 'security', 'resident']
     if (!validRoles.includes(assignedRole))
       return res.status(400).json({ error: 'Invalid role selected' })
 
-    // Unique role check
     if (UNIQUE_ROLES.includes(assignedRole)) {
       const roleOwner = await knex('users').where({ role: assignedRole }).first()
       if (roleOwner) {
@@ -82,7 +79,6 @@ app.post('/api/auth/register', async (req, res) => {
       updated_at: now
     })
 
-    // Add to members directory
     const memberRole = ROLE_LABELS[assignedRole] || 'Resident'
     await knex('members').insert({
       name: name.trim(),
@@ -101,7 +97,6 @@ app.post('/api/auth/register', async (req, res) => {
   }
 })
 
-// ── LOGIN ─────────────────────────────────────────────────
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body
@@ -128,7 +123,6 @@ app.post('/api/auth/login', async (req, res) => {
   }
 })
 
-// ── GET MY PROFILE (always from DB) ───────────────────────
 app.get('/api/auth/me', auth, async (req, res) => {
   try {
     const user = await knex('users').where({ id: req.user.id }).first()
@@ -140,7 +134,6 @@ app.get('/api/auth/me', auth, async (req, res) => {
   }
 })
 
-// ── UPDATE MY PROFILE ─────────────────────────────────────
 app.put('/api/auth/me', auth, async (req, res) => {
   try {
     const { name, phone, flat } = req.body
@@ -159,7 +152,6 @@ app.put('/api/auth/me', auth, async (req, res) => {
   }
 })
 
-// ── DELETE MY OWN ACCOUNT ─────────────────────────────────
 app.delete('/api/auth/me', auth, async (req, res) => {
   try {
     const { password } = req.body
@@ -181,7 +173,6 @@ app.delete('/api/auth/me', auth, async (req, res) => {
   }
 })
 
-// ── CHECK ROLE AVAILABILITY ───────────────────────────────
 app.get('/api/auth/check-role/:role', async (req, res) => {
   try {
     const role = req.params.role.toLowerCase().trim()
@@ -193,7 +184,6 @@ app.get('/api/auth/check-role/:role', async (req, res) => {
   }
 })
 
-// ── ADMIN: GET ALL USERS ──────────────────────────────────
 app.get('/api/users', auth, adminOnly, async (req, res) => {
   const users = await knex('users')
     .select('id','name','email','role','flat','phone','status','created_at')
@@ -201,7 +191,6 @@ app.get('/api/users', auth, adminOnly, async (req, res) => {
   res.json(users)
 })
 
-// ── ADMIN: DELETE ANY USER ────────────────────────────────
 app.delete('/api/users/:id', auth, adminOnly, async (req, res) => {
   try {
     const target = await knex('users').where({ id: req.params.id }).first()
@@ -222,7 +211,6 @@ app.delete('/api/users/:id', auth, adminOnly, async (req, res) => {
   }
 })
 
-// ── DASHBOARD ─────────────────────────────────────────────
 app.get('/api/dashboard', auth, async (req, res) => {
   try {
     const residents = await knex('members').count('id as count').first()
@@ -241,7 +229,6 @@ app.get('/api/dashboard', auth, async (req, res) => {
   }
 })
 
-// ── MEMBERS ───────────────────────────────────────────────
 app.get('/api/members', auth, async (req, res) => {
   res.json(await knex('members').orderBy('id'))
 })
@@ -254,7 +241,6 @@ app.delete('/api/members/:id', auth, async (req, res) => {
   res.json({ success: true })
 })
 
-// ── PAYMENTS ──────────────────────────────────────────────
 app.get('/api/payments', auth, async (req, res) => {
   res.json(await knex('payments').orderBy('id', 'desc'))
 })
@@ -268,7 +254,6 @@ app.post('/api/payments', auth, async (req, res) => {
   res.json({ success: true, txn_id, id })
 })
 
-// ── COMPLAINTS ────────────────────────────────────────────
 app.get('/api/complaints', auth, async (req, res) => {
   res.json(await knex('complaints').orderBy('id', 'desc'))
 })
@@ -281,7 +266,6 @@ app.put('/api/complaints/:id', auth, async (req, res) => {
   res.json({ success: true })
 })
 
-// ── VISITORS ──────────────────────────────────────────────
 app.get('/api/visitors/all', auth, async (req, res) => {
   res.json(await knex('visitors').orderBy('id', 'desc').limit(100))
 })
@@ -301,7 +285,6 @@ app.put('/api/visitors/:id/checkout', auth, async (req, res) => {
   res.json({ success: true })
 })
 
-// ── NOTICES ───────────────────────────────────────────────
 app.get('/api/notices', auth, async (req, res) => {
   res.json(await knex('notices').orderBy('id', 'desc'))
 })
@@ -314,7 +297,6 @@ app.delete('/api/notices/:id', auth, async (req, res) => {
   res.json({ success: true })
 })
 
-// ── EVENTS ────────────────────────────────────────────────
 app.get('/api/events', auth, async (req, res) => {
   res.json(await knex('events').orderBy('date'))
 })
@@ -331,7 +313,6 @@ app.delete('/api/events/:id', auth, async (req, res) => {
   res.json({ success: true })
 })
 
-// ── FINANCES ──────────────────────────────────────────────
 app.get('/api/finances', auth, async (req, res) => {
   res.json(await knex('finances').orderBy('date', 'desc'))
 })
@@ -351,7 +332,6 @@ app.post('/api/finances', auth, async (req, res) => {
   res.json({ success: true, id })
 })
 
-// ── CCTV ──────────────────────────────────────────────────
 app.get('/api/cctv', auth, async (req, res) => {
   res.json(await knex('cctv').orderBy('id', 'desc'))
 })
@@ -360,10 +340,9 @@ app.post('/api/cctv', auth, async (req, res) => {
   res.json({ success: true, id })
 })
 
-// ── START ─────────────────────────────────────────────────
 initDB().then(() => {
   console.log('✅ Database ready')
-  app.listen(5000, () => console.log('✅ Server running on http://localhost:5000'))
+  app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`))
 }).catch(e => {
   console.error('DB init failed:', e.message)
   process.exit(1)
